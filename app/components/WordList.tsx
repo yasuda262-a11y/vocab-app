@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { Search, Flag, PlusCircle, Trash2, Pencil } from "lucide-react";
+import { Search, Flag, PlusCircle, Trash2, Pencil, RotateCcw } from "lucide-react";
 import type { Word } from "../data/words";
+import { BUILTIN_WORDS } from "../data/words";
 import SpeakButton from "./SpeakButton";
 
 interface Props {
@@ -12,12 +13,17 @@ interface Props {
   onDeleteCustom: (id: string) => void;
   onEditCustom: (word: Word) => void;
   onOpenAdd: () => void;
+  overrides?: Record<string, { en: string; ja: string }>;
+  onResetOverride?: (id: string) => void;
 }
 
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 
+const BUILTIN_IDS = new Set(BUILTIN_WORDS.map((w) => w.id));
+
 export default function WordList({
   words, flagged, onToggleFlag, onDeleteCustom, onEditCustom, onOpenAdd,
+  overrides = {}, onResetOverride,
 }: Props) {
   const [query, setQuery] = useState("");
   const [filterFlag, setFilterFlag] = useState(false);
@@ -135,23 +141,33 @@ export default function WordList({
                     )}
                   </div>
                   <SpeakButton text={w.en} size={14} className="flex-shrink-0 !p-1.5" />
+                  {/* 編集ボタン：全単語 */}
+                  <button
+                    onClick={() => onEditCustom(w)}
+                    className="text-gray-300 hover:text-indigo-400 transition-colors flex-shrink-0"
+                    title="編集"
+                  >
+                    <Pencil size={14} />
+                  </button>
+                  {/* 元に戻す：オーバーライドされた組み込み単語のみ */}
+                  {BUILTIN_IDS.has(w.id) && overrides[w.id] && onResetOverride && (
+                    <button
+                      onClick={() => onResetOverride(w.id)}
+                      className="text-gray-300 hover:text-amber-400 transition-colors flex-shrink-0"
+                      title="元の単語に戻す"
+                    >
+                      <RotateCcw size={14} />
+                    </button>
+                  )}
+                  {/* 削除ボタン：追加単語のみ */}
                   {w.custom && (
-                    <>
-                      <button
-                        onClick={() => onEditCustom(w)}
-                        className="text-gray-300 hover:text-indigo-400 transition-colors flex-shrink-0"
-                        title="編集"
-                      >
-                        <Pencil size={14} />
-                      </button>
-                      <button
-                        onClick={() => onDeleteCustom(w.id)}
-                        className="text-gray-300 hover:text-red-400 transition-colors flex-shrink-0"
-                        title="削除"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </>
+                    <button
+                      onClick={() => onDeleteCustom(w.id)}
+                      className="text-gray-300 hover:text-red-400 transition-colors flex-shrink-0"
+                      title="削除"
+                    >
+                      <Trash2 size={14} />
+                    </button>
                   )}
                   <button
                     onClick={() => onToggleFlag(w.id)}

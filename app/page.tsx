@@ -13,6 +13,7 @@ import AddWordModal from "./components/AddWordModal";
 
 const FLAGS_KEY = "vocab_flags";
 const CUSTOM_KEY = "vocab_custom";
+const OVERRIDES_KEY = "vocab_overrides"; // 組み込み単語の上書き保存用
 
 function loadFlags(): Set<string> {
   if (typeof window === "undefined") return new Set();
@@ -28,6 +29,13 @@ function loadCustom(): Word[] {
 function saveCustom(words: Word[]) {
   localStorage.setItem(CUSTOM_KEY, JSON.stringify(words));
 }
+function loadOverrides(): Record<string, { en: string; ja: string }> {
+  if (typeof window === "undefined") return {};
+  try { return JSON.parse(localStorage.getItem(OVERRIDES_KEY) ?? "{}"); } catch { return {}; }
+}
+function saveOverrides(o: Record<string, { en: string; ja: string }>) {
+  localStorage.setItem(OVERRIDES_KEY, JSON.stringify(o));
+}
 
 type AppMode = "select" | "flashcard" | "quiz" | "list";
 type FilterMode = "all" | "flagged";
@@ -36,6 +44,7 @@ export default function Home() {
   const [appMode, setAppMode] = useState<AppMode>("select");
   const [flagged, setFlagged] = useState<Set<string>>(new Set());
   const [customWords, setCustomWords] = useState<Word[]>([]);
+  const [overrides, setOverrides] = useState<Record<string, { en: string; ja: string }>>({});
   const [filter, setFilter] = useState<FilterMode>("all");
   const [deck, setDeck] = useState<Word[]>([]);
   const [index, setIndex] = useState(0);
@@ -47,9 +56,14 @@ export default function Home() {
   useEffect(() => {
     setFlagged(loadFlags());
     setCustomWords(loadCustom());
+    setOverrides(loadOverrides());
   }, []);
 
-  const allWords = [...BUILTIN_WORDS, ...customWords];
+  // 組み込み単語にオーバーライドを適用
+  const builtinWithOverrides = BUILTIN_WORDS.map((w) =>
+    overrides[w.id] ? { ...w, ...overrides[w.id] } : w
+  );
+  const allWords = [...builtinWithOverrides, ...customWords];
   const flagCount = flagged.size;
 
   const buildDeck = useCallback(
@@ -88,11 +102,20 @@ export default function Home() {
   }
 
   function handleEditCustom(id: string, en: string, ja: string) {
-    setCustomWords((prev) => {
-      const next = prev.map((w) => w.id === id ? { ...w, en, ja } : w);
-      saveCustom(next);
-      return next;
-    });
+    const isBuiltin = BUILTIN_WORDS.some((w) => w.id === id);
+    if (isBuiltin) {
+      setOverrides((prev) => {
+        const next = { ...prev, [id]: { en, ja } };
+        saveOverrides(next);
+        return next;
+      });
+    } else {
+      setCustomWords((prev) => {
+        const next = prev.map((w) => w.id === id ? { ...w, en, ja } : w);
+        saveCustom(next);
+        return next;
+      });
+    }
     setEditTarget(undefined);
   }
 
@@ -205,6 +228,15 @@ export default function Home() {
           onDeleteCustom={handleDeleteCustom}
           onEditCustom={(word) => { setEditTarget(word); setShowAddModal(true); }}
           onOpenAdd={() => { setEditTarget(undefined); setShowAddModal(true); }}
+          overrides={overrides}
+          onResetOverride={(id) => {
+            setOverrides((prev) => {
+              const next = { ...prev };
+              delete next[id];
+              saveOverrides(next);
+              return next;
+            });
+          }}
         />
         {showAddModal && (
           <AddWordModal
