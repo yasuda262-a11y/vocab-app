@@ -73,7 +73,7 @@ export default function WordList({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="英語・日本語で検索"
-            className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-indigo-400 bg-white"
+            className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-gray-200 text-sm text-gray-900 focus:outline-none focus:border-indigo-400 bg-white"
           />
         </div>
         <button
