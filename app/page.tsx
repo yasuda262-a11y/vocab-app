@@ -42,6 +42,7 @@ export default function Home() {
   const [showComplete, setShowComplete] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [editTarget, setEditTarget] = useState<Word | undefined>(undefined);
 
   useEffect(() => {
     setFlagged(loadFlags());
@@ -84,6 +85,15 @@ export default function Home() {
       saveCustom(next);
       return next;
     });
+  }
+
+  function handleEditCustom(id: string, en: string, ja: string) {
+    setCustomWords((prev) => {
+      const next = prev.map((w) => w.id === id ? { ...w, en, ja } : w);
+      saveCustom(next);
+      return next;
+    });
+    setEditTarget(undefined);
   }
 
   function handleDeleteCustom(id: string) {
@@ -193,10 +203,16 @@ export default function Home() {
           flagged={flagged}
           onToggleFlag={handleToggleFlag}
           onDeleteCustom={handleDeleteCustom}
-          onOpenAdd={() => setShowAddModal(true)}
+          onEditCustom={(word) => { setEditTarget(word); setShowAddModal(true); }}
+          onOpenAdd={() => { setEditTarget(undefined); setShowAddModal(true); }}
         />
         {showAddModal && (
-          <AddWordModal onAdd={handleAddWord} onClose={() => setShowAddModal(false)} />
+          <AddWordModal
+            onAdd={handleAddWord}
+            onEdit={handleEditCustom}
+            onClose={() => { setShowAddModal(false); setEditTarget(undefined); }}
+            editTarget={editTarget}
+          />
         )}
       </div>
     );
