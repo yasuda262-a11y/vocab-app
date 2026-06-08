@@ -52,7 +52,7 @@ export default function AddWordModal({ onAdd, onEdit, onClose, editTarget }: Pro
               value={en}
               onChange={(e) => setEn(e.target.value)}
               placeholder="例: paramount"
-              className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-indigo-400"
+              className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm text-gray-900 focus:outline-none focus:border-indigo-400"
             />
           </div>
           <div>
@@ -61,7 +61,7 @@ export default function AddWordModal({ onAdd, onEdit, onClose, editTarget }: Pro
               value={ja}
               onChange={(e) => setJa(e.target.value)}
               placeholder="例: 最重要な"
-              className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-indigo-400"
+              className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm text-gray-900 focus:outline-none focus:border-indigo-400"
             />
           </div>
           {error && <p className="text-xs text-red-500">{error}</p>}
