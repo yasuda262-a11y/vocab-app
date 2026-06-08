@@ -3,17 +3,19 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   Brain, BookOpen, Trophy, Library, Shuffle,
-  Flag, RotateCcw, ChevronDown,
+  Flag, RotateCcw, ChevronDown, BarChart2,
 } from "lucide-react";
 import { BUILTIN_WORDS, type Word } from "./data/words";
 import FlashCard from "./components/FlashCard";
 import WordList from "./components/WordList";
 import QuizMode from "./components/QuizMode";
 import AddWordModal from "./components/AddWordModal";
+import StatsView, { type StatsRecord } from "./components/StatsView";
 
 const FLAGS_KEY = "vocab_flags";
 const CUSTOM_KEY = "vocab_custom";
-const OVERRIDES_KEY = "vocab_overrides"; // 組み込み単語の上書き保存用
+const OVERRIDES_KEY = "vocab_overrides";
+const STATS_KEY = "vocab_stats";
 
 function loadFlags(): Set<string> {
   if (typeof window === "undefined") return new Set();
@@ -36,8 +38,15 @@ function loadOverrides(): Record<string, { en: string; ja: string }> {
 function saveOverrides(o: Record<string, { en: string; ja: string }>) {
   localStorage.setItem(OVERRIDES_KEY, JSON.stringify(o));
 }
+function loadStats(): StatsRecord {
+  if (typeof window === "undefined") return {};
+  try { return JSON.parse(localStorage.getItem(STATS_KEY) ?? "{}"); } catch { return {}; }
+}
+function saveStats(s: StatsRecord) {
+  localStorage.setItem(STATS_KEY, JSON.stringify(s));
+}
 
-type AppMode = "select" | "flashcard" | "quiz" | "list";
+type AppMode = "select" | "flashcard" | "quiz" | "list" | "stats";
 type FilterMode = "all" | "flagged";
 
 export default function Home() {
@@ -45,6 +54,7 @@ export default function Home() {
   const [flagged, setFlagged] = useState<Set<string>>(new Set());
   const [customWords, setCustomWords] = useState<Word[]>([]);
   const [overrides, setOverrides] = useState<Record<string, { en: string; ja: string }>>({});
+  const [stats, setStats] = useState<StatsRecord>({});
   const [filter, setFilter] = useState<FilterMode>("all");
   const [deck, setDeck] = useState<Word[]>([]);
   const [index, setIndex] = useState(0);
@@ -57,6 +67,7 @@ export default function Home() {
     setFlagged(loadFlags());
     setCustomWords(loadCustom());
     setOverrides(loadOverrides());
+    setStats(loadStats());
   }, []);
 
   // 組み込み単語にオーバーライドを適用
@@ -65,6 +76,14 @@ export default function Home() {
   );
   const allWords = [...builtinWithOverrides, ...customWords];
   const flagCount = flagged.size;
+
+  // 全体正答率（ホーム表示用）
+  const overallRate = (() => {
+    const entries = Object.values(stats);
+    const total = entries.reduce((s, e) => s + e.total, 0);
+    const correct = entries.reduce((s, e) => s + e.correct, 0);
+    return total > 0 ? Math.round((correct / total) * 100) : null;
+  })();
 
   const buildDeck = useCallback(
     (mode: FilterMode, flags: Set<string>, all: Word[], shuffle = true) => {
@@ -133,6 +152,27 @@ export default function Home() {
     });
   }
 
+  // クイズ結果を統計に反映
+  function handleQuizDone(results: { wordId: string; correct: boolean }[]) {
+    setStats((prev) => {
+      const next = { ...prev };
+      for (const r of results) {
+        const cur = next[r.wordId] ?? { correct: 0, total: 0 };
+        next[r.wordId] = {
+          correct: cur.correct + (r.correct ? 1 : 0),
+          total: cur.total + 1,
+        };
+      }
+      saveStats(next);
+      return next;
+    });
+  }
+
+  function handleClearStats() {
+    setStats({});
+    saveStats({});
+  }
+
   function handleNext() {
     if (index + 1 >= deck.length) setShowComplete(true);
     else setIndex((i) => i + 1);
@@ -185,25 +225,67 @@ export default function Home() {
             <div className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center flex-shrink-0">
               <Trophy size={28} className="text-white" />
             </div>
-            <div className="text-left">
+            <div className="text-left flex-1">
               <p className="text-lg font-bold">10問クイズ</p>
               <p className="text-sm text-emerald-200 mt-0.5">4択で意味を選ぶ問題形式</p>
             </div>
+            {overallRate !== null && (
+              <div className="bg-white/20 rounded-2xl px-3 py-1.5 text-right flex-shrink-0">
+                <p className="text-xs text-emerald-100">正答率</p>
+                <p className="text-lg font-bold text-white">{overallRate}%</p>
+              </div>
+            )}
           </button>
 
-          <button
-            onClick={() => setAppMode("list")}
-            className="w-full max-w-sm bg-white border-2 border-gray-200 text-gray-700 rounded-3xl px-6 py-5 flex items-center gap-5 shadow-sm hover:border-indigo-300 hover:bg-indigo-50 active:scale-95 transition-all"
-          >
-            <div className="w-14 h-14 rounded-2xl bg-gray-100 flex items-center justify-center flex-shrink-0">
-              <Library size={28} className="text-gray-500" />
-            </div>
-            <div className="text-left">
-              <p className="text-lg font-bold">単語一覧</p>
-              <p className="text-sm text-gray-400 mt-0.5">全単語の確認・検索・追加</p>
-            </div>
-          </button>
+          <div className="w-full max-w-sm flex gap-3">
+            <button
+              onClick={() => setAppMode("list")}
+              className="flex-1 bg-white border-2 border-gray-200 text-gray-700 rounded-3xl px-5 py-4 flex items-center gap-3 shadow-sm hover:border-indigo-300 hover:bg-indigo-50 active:scale-95 transition-all"
+            >
+              <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center flex-shrink-0">
+                <Library size={20} className="text-gray-500" />
+              </div>
+              <div className="text-left">
+                <p className="text-base font-bold">単語一覧</p>
+                <p className="text-xs text-gray-400 mt-0.5">確認・検索・追加</p>
+              </div>
+            </button>
+
+            <button
+              onClick={() => setAppMode("stats")}
+              className="flex-1 bg-white border-2 border-gray-200 text-gray-700 rounded-3xl px-5 py-4 flex items-center gap-3 shadow-sm hover:border-emerald-300 hover:bg-emerald-50 active:scale-95 transition-all"
+            >
+              <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center flex-shrink-0">
+                <BarChart2 size={20} className="text-gray-500" />
+              </div>
+              <div className="text-left">
+                <p className="text-base font-bold">統計</p>
+                <p className="text-xs text-gray-400 mt-0.5">成績・苦手単語</p>
+              </div>
+            </button>
+          </div>
         </main>
+      </div>
+    );
+  }
+
+  // ===== 統計 =====
+  if (appMode === "stats") {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-emerald-50 via-white to-white">
+        <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-gray-100 px-4 py-3">
+          <div className="max-w-lg mx-auto flex items-center justify-between">
+            <button onClick={() => setAppMode("select")} className="text-emerald-600 font-semibold text-sm">
+              ← ホーム
+            </button>
+            <div className="flex items-center gap-2">
+              <BarChart2 size={16} className="text-emerald-600" />
+              <span className="font-bold text-gray-800 text-sm">クイズ統計</span>
+            </div>
+            <div className="w-16" />
+          </div>
+        </header>
+        <StatsView words={allWords} stats={stats} onClearStats={handleClearStats} />
       </div>
     );
   }
@@ -268,7 +350,7 @@ export default function Home() {
             <div className="w-16" />
           </div>
         </header>
-        <QuizMode words={allWords} />
+        <QuizMode words={allWords} onQuizDone={handleQuizDone} />
       </div>
     );
   }

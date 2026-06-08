@@ -33,13 +33,19 @@ function buildQuiz(words: Word[]): Question[] {
   });
 }
 
+interface QuizResult {
+  wordId: string;
+  correct: boolean;
+}
+
 interface Props {
   words: Word[];
+  onQuizDone?: (results: QuizResult[]) => void;
 }
 
 type Phase = "quiz" | "result";
 
-export default function QuizMode({ words }: Props) {
+export default function QuizMode({ words, onQuizDone }: Props) {
   const [questions, setQuestions] = useState<Question[]>(() => buildQuiz(words));
   const [current, setCurrent] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
@@ -122,6 +128,14 @@ export default function QuizMode({ words }: Props) {
     setAnswers(newAnswers);
     if (current + 1 >= questions.length) {
       setPhase("result");
+      // 全問終了時に結果をコールバック
+      if (onQuizDone) {
+        const results: QuizResult[] = questions.map((qItem, i) => ({
+          wordId: qItem.word.id,
+          correct: i < newAnswers.length ? newAnswers[i] : false,
+        }));
+        onQuizDone(results);
+      }
     } else {
       setCurrent((c) => c + 1);
       setSelected(null);
