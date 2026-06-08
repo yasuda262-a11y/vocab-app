@@ -3,6 +3,7 @@
 import { useState, useCallback } from "react";
 import { ChevronRight, RotateCcw, Trophy } from "lucide-react";
 import type { Word } from "../data/words";
+import SpeakButton from "./SpeakButton";
 
 const QUIZ_SIZE = 10;
 
@@ -153,9 +154,10 @@ export default function QuizMode({ words }: Props) {
       </div>
 
       {/* Question */}
-      <div className="bg-white rounded-3xl shadow-xl border border-gray-100 px-6 py-10 text-center">
-        <p className="text-xs text-gray-400 mb-3 font-medium">この単語の意味は？</p>
+      <div className="bg-white rounded-3xl shadow-xl border border-gray-100 px-6 py-8 text-center flex flex-col items-center gap-3">
+        <p className="text-xs text-gray-400 font-medium">この単語の意味は？</p>
         <p className="text-3xl font-bold text-gray-800 leading-snug">{q.word.en}</p>
+        <SpeakButton text={q.word.en} />
       </div>
 
       {/* Choices */}

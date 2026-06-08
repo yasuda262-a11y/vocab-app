@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Search, Flag, PlusCircle, Trash2 } from "lucide-react";
 import type { Word } from "../data/words";
+import SpeakButton from "./SpeakButton";
 
 interface Props {
   words: Word[];
@@ -69,6 +70,7 @@ export default function WordList({ words, flagged, onToggleFlag, onDeleteCustom,
               <p className="font-semibold text-gray-800 text-sm truncate">{w.en}</p>
               <p className="text-xs text-gray-500 truncate mt-0.5">{w.ja}</p>
             </div>
+            <SpeakButton text={w.en} size={14} className="flex-shrink-0 !p-1.5" />
             {w.custom && (
               <button
                 onClick={() => onDeleteCustom(w.id)}

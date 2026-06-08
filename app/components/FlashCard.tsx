@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ChevronRight, Eye, Flag } from "lucide-react";
 import type { Word } from "../data/words";
+import SpeakButton from "./SpeakButton";
 
 interface Props {
   word: Word;
@@ -55,12 +56,13 @@ export default function FlashCard({
 
         {/* English word */}
         <div
-          className="flex items-center justify-center py-10 px-6 cursor-pointer"
+          className="flex flex-col items-center justify-center py-8 px-6 cursor-pointer gap-3"
           onClick={() => setRevealed(true)}
         >
           <p className="text-3xl font-bold text-gray-800 text-center leading-snug">
             {word.en}
           </p>
+          <SpeakButton text={word.en} />
         </div>
 
         {/* Answer area */}
