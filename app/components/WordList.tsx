@@ -4,6 +4,7 @@ import { useState, useRef } from "react";
 import { Search, Flag, PlusCircle, Trash2, Pencil, RotateCcw } from "lucide-react";
 import type { Word } from "../data/words";
 import { BUILTIN_WORDS } from "../data/words";
+import type { StatsRecord } from "./StatsView";
 import SpeakButton from "./SpeakButton";
 
 interface Props {
@@ -15,6 +16,7 @@ interface Props {
   onOpenAdd: () => void;
   overrides?: Record<string, { en: string; ja: string }>;
   onResetOverride?: (id: string) => void;
+  stats?: StatsRecord;
 }
 
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
@@ -23,7 +25,7 @@ const BUILTIN_IDS = new Set(BUILTIN_WORDS.map((w) => w.id));
 
 export default function WordList({
   words, flagged, onToggleFlag, onDeleteCustom, onEditCustom, onOpenAdd,
-  overrides = {}, onResetOverride,
+  overrides = {}, onResetOverride, stats = {},
 }: Props) {
   const [query, setQuery] = useState("");
   const [filterFlag, setFilterFlag] = useState(false);
@@ -140,6 +142,23 @@ export default function WordList({
                       <span className="text-[10px] text-indigo-400 font-medium">追加単語</span>
                     )}
                   </div>
+                  {/* 正答率バッジ */}
+                  {(() => {
+                    const s = stats[w.id];
+                    if (!s || s.total === 0) return null;
+                    const rate = s.correct / s.total;
+                    const pct = Math.round(rate * 100);
+                    const color =
+                      rate >= 0.8 ? "bg-emerald-50 text-emerald-600 border-emerald-200"
+                      : rate >= 0.5 ? "bg-amber-50 text-amber-500 border-amber-200"
+                      : "bg-red-50 text-red-500 border-red-200";
+                    return (
+                      <div className={`flex-shrink-0 border rounded-lg px-1.5 py-0.5 text-center ${color}`}>
+                        <p className="text-[11px] font-bold leading-tight">{pct}%</p>
+                        <p className="text-[9px] leading-tight opacity-70">{s.correct}/{s.total}</p>
+                      </div>
+                    );
+                  })()}
                   <SpeakButton text={w.en} size={14} className="flex-shrink-0 !p-1.5" />
                   {/* 編集ボタン：全単語 */}
                   <button

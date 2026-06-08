@@ -310,6 +310,7 @@ export default function Home() {
           onDeleteCustom={handleDeleteCustom}
           onEditCustom={(word) => { setEditTarget(word); setShowAddModal(true); }}
           onOpenAdd={() => { setEditTarget(undefined); setShowAddModal(true); }}
+          stats={stats}
           overrides={overrides}
           onResetOverride={(id) => {
             setOverrides((prev) => {
