@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import type { User } from "@supabase/supabase-js";
 import {
   Brain, BookOpen, Trophy, Library, Shuffle,
-  Flag, RotateCcw, ChevronDown, BarChart2,
+  Flag, RotateCcw, ChevronDown, BarChart2, LogIn, LogOut,
 } from "lucide-react";
 import { BUILTIN_WORDS, type Word } from "./data/words";
 import FlashCard from "./components/FlashCard";
@@ -11,6 +12,10 @@ import WordList from "./components/WordList";
 import QuizMode from "./components/QuizMode";
 import AddWordModal from "./components/AddWordModal";
 import StatsView, { type StatsRecord } from "./components/StatsView";
+import { supabase } from "./lib/supabase";
+import { mergeOnLogin, saveRemote, getUserId } from "./lib/sync";
+
+type AuthMode = "login" | "signup" | "reset";
 
 const FLAGS_KEY = "vocab_flags";
 const CUSTOM_KEY = "vocab_custom";
@@ -62,6 +67,16 @@ export default function Home() {
   const [showMenu, setShowMenu] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [editTarget, setEditTarget] = useState<Word | undefined>(undefined);
+  const [user, setUser] = useState<User | null>(null);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authMode, setAuthMode] = useState<AuthMode>("login");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authSuccess, setAuthSuccess] = useState<string | null>(null);
+  const [authLoading, setAuthLoading] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const userRef = useRef<User | null>(null);
 
   useEffect(() => {
     setFlagged(loadFlags());
@@ -69,6 +84,66 @@ export default function Home() {
     setOverrides(loadOverrides());
     setStats(loadStats());
   }, []);
+
+  // 認証状態の監視 + ログイン時マージ
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => handleUser(data.user ?? null));
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
+      handleUser(session?.user ?? null);
+    });
+    return () => subscription.unsubscribe();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function handleUser(u: User | null) {
+    setUser(u);
+    userRef.current = u;
+    if (!u) return;
+    const snap = await mergeOnLogin();
+    if (!snap) return;
+    setFlagged(new Set(snap.flags));
+    setCustomWords(snap.customWords);
+    setOverrides(snap.overrides);
+    setStats(snap.stats);
+  }
+
+  // データ変更時に自動保存（デバウンス2秒）
+  function triggerSave(
+    flags: Set<string>, custom: Word[],
+    ov: Record<string, { en: string; ja: string }>, st: StatsRecord
+  ) {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      const uid = userRef.current?.id ?? await getUserId();
+      if (!uid) return;
+      saveRemote(uid, { flags: [...flags], customWords: custom, overrides: ov, stats: st }).catch(() => {});
+    }, 2000);
+  }
+
+  async function handleAuthSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setAuthError(null); setAuthSuccess(null); setAuthLoading(true);
+    try {
+      if (authMode === "login") {
+        const { error } = await supabase.auth.signInWithPassword({ email: authEmail, password: authPassword });
+        if (error) throw error;
+        setShowAuthModal(false);
+      } else if (authMode === "signup") {
+        const { error } = await supabase.auth.signUp({ email: authEmail, password: authPassword });
+        if (error) throw error;
+        setAuthSuccess("アカウントを作成しました。ログインしてください。");
+        setAuthMode("login");
+      } else {
+        const { error } = await supabase.auth.resetPasswordForEmail(authEmail, { redirectTo: `${window.location.origin}/` });
+        if (error) throw error;
+        setAuthSuccess("パスワードリセットメールを送信しました。");
+      }
+    } catch (err: unknown) {
+      setAuthError(err instanceof Error ? err.message : "エラーが発生しました");
+    } finally {
+      setAuthLoading(false);
+    }
+  }
 
   // 組み込み単語にオーバーライドを適用
   const builtinWithOverrides = BUILTIN_WORDS.map((w) =>
@@ -106,6 +181,7 @@ export default function Home() {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
       saveFlags(next);
+      triggerSave(next, customWords, overrides, stats);
       return next;
     });
   }
@@ -116,6 +192,7 @@ export default function Home() {
     setCustomWords((prev) => {
       const next = [...prev, word];
       saveCustom(next);
+      triggerSave(flagged, next, overrides, stats);
       return next;
     });
   }
@@ -126,12 +203,14 @@ export default function Home() {
       setOverrides((prev) => {
         const next = { ...prev, [id]: { en, ja } };
         saveOverrides(next);
+        triggerSave(flagged, customWords, next, stats);
         return next;
       });
     } else {
       setCustomWords((prev) => {
         const next = prev.map((w) => w.id === id ? { ...w, en, ja } : w);
         saveCustom(next);
+        triggerSave(flagged, next, overrides, stats);
         return next;
       });
     }
@@ -139,15 +218,17 @@ export default function Home() {
   }
 
   function handleDeleteCustom(id: string) {
+    let newCustom: Word[] = [];
     setCustomWords((prev) => {
-      const next = prev.filter((w) => w.id !== id);
-      saveCustom(next);
-      return next;
+      newCustom = prev.filter((w) => w.id !== id);
+      saveCustom(newCustom);
+      return newCustom;
     });
     setFlagged((prev) => {
       const next = new Set(prev);
       next.delete(id);
       saveFlags(next);
+      triggerSave(next, newCustom, overrides, stats);
       return next;
     });
   }
@@ -164,6 +245,7 @@ export default function Home() {
         };
       }
       saveStats(next);
+      triggerSave(flagged, customWords, overrides, next);
       return next;
     });
   }
@@ -171,6 +253,7 @@ export default function Home() {
   function handleClearStats() {
     setStats({});
     saveStats({});
+    triggerSave(flagged, customWords, overrides, {});
   }
 
   function handleNext() {
@@ -188,15 +271,69 @@ export default function Home() {
   ];
   const currentLabel = filterOptions.find((o) => o.value === filter)?.label ?? "";
 
+  // ===== Auth Modal =====
+  const authModal = showAuthModal && (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: "rgba(0,0,0,0.5)" }}
+      onClick={(e) => { if (e.target === e.currentTarget) setShowAuthModal(false); }}
+    >
+      <div className="w-full max-w-sm bg-white rounded-2xl p-6 shadow-2xl mx-4">
+        <h2 className="text-gray-800 text-lg font-bold mb-4">
+          {authMode === "login" ? "ログイン" : authMode === "signup" ? "アカウント作成" : "パスワードリセット"}
+        </h2>
+        <form onSubmit={handleAuthSubmit} className="flex flex-col gap-3">
+          <input type="email" placeholder="メールアドレス" value={authEmail}
+            onChange={(e) => setAuthEmail(e.target.value)} required
+            className="w-full px-3 py-2 rounded-xl text-sm border border-gray-200 outline-none focus:border-indigo-400" />
+          {authMode !== "reset" && (
+            <input type="password" placeholder="パスワード" value={authPassword}
+              onChange={(e) => setAuthPassword(e.target.value)} required
+              className="w-full px-3 py-2 rounded-xl text-sm border border-gray-200 outline-none focus:border-indigo-400" />
+          )}
+          {authError   && <p className="text-red-500 text-xs">{authError}</p>}
+          {authSuccess && <p className="text-green-600 text-xs">{authSuccess}</p>}
+          <button type="submit" disabled={authLoading}
+            className="w-full py-2 rounded-xl text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50">
+            {authLoading ? "処理中..." : authMode === "login" ? "ログイン" : authMode === "signup" ? "アカウント作成" : "送信"}
+          </button>
+        </form>
+        <div className="mt-3 flex flex-col gap-1.5 text-xs text-gray-400">
+          {authMode === "login" && (<>
+            <button onClick={() => { setAuthMode("signup"); setAuthError(null); }} className="hover:text-indigo-600 text-left">アカウントをお持ちでない方 →</button>
+            <button onClick={() => { setAuthMode("reset"); setAuthError(null); }} className="hover:text-indigo-600 text-left">パスワードを忘れた方 →</button>
+          </>)}
+          {authMode !== "login" && (
+            <button onClick={() => { setAuthMode("login"); setAuthError(null); }} className="hover:text-indigo-600 text-left">← ログインに戻る</button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
   // ===== ホーム =====
   if (appMode === "select") {
     return (
       <div className="min-h-screen bg-gradient-to-b from-indigo-50 via-white to-white flex flex-col">
-        <header className="px-4 py-5 flex items-center justify-center gap-2 border-b border-gray-100 bg-white/80 backdrop-blur">
-          <div className="w-8 h-8 rounded-xl bg-indigo-600 flex items-center justify-center">
-            <BookOpen size={15} className="text-white" />
+        {authModal}
+        <header className="px-4 py-5 flex items-center justify-between border-b border-gray-100 bg-white/80 backdrop-blur">
+          <div className="w-8" />
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-xl bg-indigo-600 flex items-center justify-center">
+              <BookOpen size={15} className="text-white" />
+            </div>
+            <span className="font-bold text-gray-800">英単語アプリ</span>
           </div>
-          <span className="font-bold text-gray-800">英単語アプリ</span>
+          {user ? (
+            <button onClick={() => supabase.auth.signOut()} className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600">
+              <LogOut size={13} /> ログアウト
+            </button>
+          ) : (
+            <button onClick={() => { setAuthMode("login"); setAuthError(null); setAuthSuccess(null); setShowAuthModal(true); }}
+              className="flex items-center gap-1 text-xs text-indigo-600 font-semibold hover:text-indigo-700">
+              <LogIn size={13} /> ログイン
+            </button>
+          )}
         </header>
 
         <main className="flex-1 flex flex-col items-center justify-center gap-4 px-6">
