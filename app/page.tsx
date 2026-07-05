@@ -5,7 +5,9 @@ import type { User } from "@supabase/supabase-js";
 import {
   Brain, BookOpen, Trophy, Library, Shuffle,
   Flag, RotateCcw, ChevronDown, BarChart2, LogIn, LogOut,
+  Download, Upload, TriangleAlert,
 } from "lucide-react";
+import { shuffle } from "./lib/shuffle";
 import { BUILTIN_WORDS, type Word } from "./data/words";
 import FlashCard from "./components/FlashCard";
 import WordList from "./components/WordList";
@@ -52,7 +54,9 @@ function saveStats(s: StatsRecord) {
 }
 
 type AppMode = "select" | "flashcard" | "quiz" | "list" | "stats";
-type FilterMode = "all" | "flagged";
+type FilterMode = "all" | "unlearned" | "weak" | "flagged";
+
+const WEAK_THRESHOLD = 0.8;
 
 export default function Home() {
   const [appMode, setAppMode] = useState<AppMode>("select");
@@ -161,10 +165,25 @@ export default function Home() {
   })();
 
   const buildDeck = useCallback(
-    (mode: FilterMode, flags: Set<string>, all: Word[], shuffle = true) => {
-      let source = mode === "flagged" ? all.filter((w) => flags.has(w.id)) : [...all];
-      if (shuffle) source = source.sort(() => Math.random() - 0.5);
-      setDeck(source);
+    (mode: FilterMode, flags: Set<string>, all: Word[], st: StatsRecord) => {
+      let source: Word[];
+      switch (mode) {
+        case "flagged":
+          source = all.filter((w) => flags.has(w.id));
+          break;
+        case "unlearned":
+          source = all.filter((w) => !st[w.id] || st[w.id].total === 0);
+          break;
+        case "weak":
+          source = all.filter((w) => {
+            const s = st[w.id];
+            return s && s.total > 0 && s.correct / s.total < WEAK_THRESHOLD;
+          });
+          break;
+        default:
+          source = [...all];
+      }
+      setDeck(shuffle(source));
       setIndex(0);
       setShowComplete(false);
     },
@@ -172,7 +191,7 @@ export default function Home() {
   );
 
   useEffect(() => {
-    if (appMode === "flashcard") buildDeck(filter, flagged, allWords, true);
+    if (appMode === "flashcard") buildDeck(filter, flagged, allWords, stats);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter, appMode]);
 
@@ -233,6 +252,26 @@ export default function Home() {
     });
   }
 
+  // 暗記カードの自己評価（◯/✕）を統計に反映。✕は自動フラグ
+  function handleCardResult(wordId: string, correct: boolean) {
+    const cur = stats[wordId] ?? { correct: 0, total: 0 };
+    const nextStats: StatsRecord = {
+      ...stats,
+      [wordId]: { correct: cur.correct + (correct ? 1 : 0), total: cur.total + 1 },
+    };
+    setStats(nextStats);
+    saveStats(nextStats);
+
+    let nextFlags = flagged;
+    if (!correct && !flagged.has(wordId)) {
+      nextFlags = new Set(flagged);
+      nextFlags.add(wordId);
+      setFlagged(nextFlags);
+      saveFlags(nextFlags);
+    }
+    triggerSave(nextFlags, customWords, overrides, nextStats);
+  }
+
   // クイズ結果を統計に反映
   function handleQuizDone(results: { wordId: string; correct: boolean }[]) {
     setStats((prev) => {
@@ -256,18 +295,87 @@ export default function Home() {
     triggerSave(flagged, customWords, overrides, {});
   }
 
+  // ==================== エクスポート / インポート ====================
+  const [dataMsg, setDataMsg] = useState<string | null>(null);
+  const dataMsgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function showDataMsg(msg: string) {
+    setDataMsg(msg);
+    if (dataMsgTimer.current) clearTimeout(dataMsgTimer.current);
+    dataMsgTimer.current = setTimeout(() => setDataMsg(null), 5000);
+  }
+
+  function handleExport() {
+    const payload = {
+      app: "vocab-app",
+      exportedAt: new Date().toISOString(),
+      flags: [...flagged],
+      customWords,
+      overrides,
+      stats,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `vocab-backup_${new Date().toLocaleDateString("sv-SE")}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showDataMsg("バックアップファイルをダウンロードしました");
+  }
+
+  /** 追記型マージ（既存データは消さない）。統計は学習回数が多い方を採用 */
+  async function handleImportFile(file: File) {
+    try {
+      const p = JSON.parse(await file.text());
+      if (p?.app !== "vocab-app" || !Array.isArray(p.flags) || !Array.isArray(p.customWords)) {
+        showDataMsg("ファイル形式が正しくありません（このアプリでエクスポートしたJSONを選択してください）");
+        return;
+      }
+      const nf = new Set([...flagged, ...(p.flags as string[])]);
+      const ids = new Set(customWords.map((w) => w.id));
+      const added = (p.customWords as Word[]).filter((w) => w?.id && w?.en && !ids.has(w.id));
+      const nc = [...customWords, ...added];
+      const no = { ...(p.overrides ?? {}), ...overrides }; // 競合は既存（この端末）優先
+      const ns: StatsRecord = { ...stats };
+      for (const [id, e] of Object.entries((p.stats ?? {}) as StatsRecord)) {
+        if (typeof e?.total !== "number") continue;
+        if (!ns[id] || e.total > ns[id].total) ns[id] = e;
+      }
+      setFlagged(nf);      saveFlags(nf);
+      setCustomWords(nc);  saveCustom(nc);
+      setOverrides(no);    saveOverrides(no);
+      setStats(ns);        saveStats(ns);
+      triggerSave(nf, nc, no, ns);
+      showDataMsg(`インポート完了：カスタム単語${added.length}語を追加しました（既存データは保持）`);
+    } catch {
+      showDataMsg("読み込みに失敗しました");
+    }
+  }
+
+  const hasLocalData =
+    customWords.length > 0 || flagged.size > 0 ||
+    Object.keys(overrides).length > 0 || Object.keys(stats).length > 0;
+
   function handleNext() {
     if (index + 1 >= deck.length) setShowComplete(true);
     else setIndex((i) => i + 1);
   }
 
   function handleRestart() {
-    buildDeck(filter, flagged, allWords, true);
+    buildDeck(filter, flagged, allWords, stats);
   }
 
+  const unlearnedCount = allWords.filter((w) => !stats[w.id] || stats[w.id].total === 0).length;
+  const weakCount = allWords.filter((w) => {
+    const s = stats[w.id];
+    return s && s.total > 0 && s.correct / s.total < WEAK_THRESHOLD;
+  }).length;
+
   const filterOptions: { value: FilterMode; label: string }[] = [
-    { value: "all", label: `すべて (${allWords.length}語)` },
-    { value: "flagged", label: `フラグのみ (${flagCount}語)` },
+    { value: "all",       label: `すべて (${allWords.length}語)` },
+    { value: "unlearned", label: `未学習のみ (${unlearnedCount}語)` },
+    { value: "weak",      label: `苦手のみ・正答率80%未満 (${weakCount}語)` },
+    { value: "flagged",   label: `フラグのみ (${flagCount}語)` },
   ];
   const currentLabel = filterOptions.find((o) => o.value === filter)?.label ?? "";
 
@@ -343,7 +451,7 @@ export default function Home() {
           </div>
 
           <button
-            onClick={() => { buildDeck("all", flagged, allWords, true); setAppMode("flashcard"); }}
+            onClick={() => { buildDeck(filter, flagged, allWords, stats); setAppMode("flashcard"); }}
             className="w-full max-w-sm bg-indigo-600 text-white rounded-3xl px-6 py-5 flex items-center gap-5 shadow-lg hover:bg-indigo-700 active:scale-95 transition-all"
           >
             <div className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center flex-shrink-0">
@@ -400,6 +508,34 @@ export default function Home() {
                 <p className="text-xs text-gray-400 mt-0.5">成績・苦手単語</p>
               </div>
             </button>
+          </div>
+
+          {/* データ保護 */}
+          <div className="w-full max-w-sm flex flex-col gap-2 mt-1">
+            {!user && hasLocalData && (
+              <p className="flex items-start gap-1.5 text-[11px] text-amber-600 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 leading-snug">
+                <TriangleAlert size={13} className="shrink-0 mt-0.5" />
+                未ログインのため、学習データはこの端末にのみ保存されています。ログインするとクラウドに自動同期されます。
+              </p>
+            )}
+            <div className="flex items-center justify-center gap-6 text-xs text-gray-400">
+              <button onClick={handleExport}
+                className="flex items-center gap-1 hover:text-indigo-600 transition-colors">
+                <Download size={12} />データをエクスポート
+              </button>
+              <label className="flex items-center gap-1 hover:text-indigo-600 transition-colors cursor-pointer">
+                <Upload size={12} />インポート
+                <input type="file" accept=".json,application/json" className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) handleImportFile(f);
+                    e.target.value = "";
+                  }} />
+              </label>
+            </div>
+            {dataMsg && (
+              <p className="text-center text-xs text-emerald-600">{dataMsg}</p>
+            )}
           </div>
         </main>
       </div>
@@ -488,7 +624,7 @@ export default function Home() {
             <div className="w-16" />
           </div>
         </header>
-        <QuizMode words={allWords} onQuizDone={handleQuizDone} />
+        <QuizMode words={allWords} stats={stats} onQuizDone={handleQuizDone} />
       </div>
     );
   }
@@ -544,7 +680,12 @@ export default function Home() {
         {deck.length === 0 && (
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <Flag size={40} className="text-gray-300 mb-4" />
-            <p className="text-gray-500 font-medium">フラグのある単語がありません</p>
+            <p className="text-gray-500 font-medium">
+              {filter === "flagged" ? "フラグのある単語がありません"
+               : filter === "weak" ? "苦手な単語がありません 🎉"
+               : filter === "unlearned" ? "未学習の単語がありません 🎉"
+               : "単語がありません"}
+            </p>
             <button onClick={() => setFilter("all")} className="mt-4 text-sm text-indigo-600 font-semibold">
               すべての単語に戻る
             </button>
@@ -583,6 +724,7 @@ export default function Home() {
             isFlagged={flagged.has(deck[index].id)}
             onToggleFlag={() => handleToggleFlag(deck[index].id)}
             onNext={handleNext}
+            onResult={(correct) => handleCardResult(deck[index].id, correct)}
             cardNumber={index + 1}
             total={deck.length}
           />

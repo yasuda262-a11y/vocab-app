@@ -24,3 +24,13 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* iOS Safari はフォント16px未満の入力欄にフォーカスすると画面全体を自動ズームするため、
+   モバイルでは入力欄のフォントを16px未満にしない */
+@media (max-width: 767px) {
+  input,
+  textarea,
+  select {
+    font-size: max(16px, 1em) !important;
+  }
+}
